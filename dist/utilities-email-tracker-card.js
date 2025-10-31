@@ -1,4 +1,32 @@
 const CARD_VERSION = "0.1.0";
+const UET_VALID_FIELDS = [
+  "amount_due",
+  "due_date",
+  "account",
+  "billing_period",
+];
+const UET_DEFAULT_FIELDS = [...UET_VALID_FIELDS];
+const UET_FIELD_LABELS = {
+  amount_due: "Amount Due",
+  due_date: "Due Date",
+  account: "Account Number",
+  billing_period: "Billing Period",
+};
+const UET_FIELD_ALIASES = {
+  amount: "amount_due",
+  amountdue: "amount_due",
+  amount_due: "amount_due",
+  due: "due_date",
+  duedate: "due_date",
+  due_date: "due_date",
+  account: "account",
+  accountnumber: "account",
+  account_number: "account",
+  billing: "billing_period",
+  billingperiod: "billing_period",
+  billing_period: "billing_period",
+  period: "billing_period",
+};
 
 class UtilitiesEmailTrackerCard extends HTMLElement {
   setConfig(config) {
@@ -12,11 +40,16 @@ class UtilitiesEmailTrackerCard extends HTMLElement {
       config.bill_index !== null &&
       Number.isInteger(parsedIndex);
 
+    const fields = this._normalizeFields(
+      config.fields ?? config.display_fields
+    );
+
     this._config = {
       title: config.title,
       provider: config.provider,
       entity: config.entity,
       ...(hasBillIndex ? { bill_index: parsedIndex } : {}),
+      ...(fields ? { fields } : {}),
     };
 
     if (!this._card) {
@@ -167,6 +200,67 @@ class UtilitiesEmailTrackerCard extends HTMLElement {
     `;
   }
 
+  _normalizeFields(fields) {
+    if (fields === undefined || fields === null || fields === "") {
+      return null;
+    }
+
+    let list = [];
+    if (Array.isArray(fields)) {
+      list = fields;
+    } else if (typeof fields === "string") {
+      list = fields
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+    } else {
+      return null;
+    }
+
+    const seen = new Set();
+    const normalized = [];
+
+    list.forEach((item) => {
+      const key = this._normalizeFieldKey(item);
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        normalized.push(key);
+      }
+    });
+
+    if (!normalized.length) {
+      return null;
+    }
+
+    return normalized;
+  }
+
+  _normalizeFieldKey(value) {
+    if (value === undefined || value === null) {
+      return null;
+    }
+
+    const lower = `${value}`.toLowerCase().trim();
+    if (!lower) {
+      return null;
+    }
+
+    const simple = lower.replace(/[\s-]+/g, "_");
+    const sanitized = simple.replace(/[^a-z_]/g, "");
+    const candidates = [lower, simple, sanitized];
+
+    for (const candidate of candidates) {
+      if (UET_VALID_FIELDS.includes(candidate)) {
+        return candidate;
+      }
+      if (UET_FIELD_ALIASES[candidate]) {
+        return UET_FIELD_ALIASES[candidate];
+      }
+    }
+
+    return null;
+  }
+
   _collectBills(bills) {
     if (!Array.isArray(bills) || bills.length === 0) {
       return [];
@@ -208,18 +302,30 @@ class UtilitiesEmailTrackerCard extends HTMLElement {
     const due = this._formatDate(bill.due_date_iso, bill.due_date);
     const billing = this._resolveBillingPeriod(bill);
     const amount = this._formatAmount(bill.amount_due, bill.amount_due_value);
-    const received = this._formatDate(bill.received, bill.received);
-    const location = bill.service_address || bill.serviceAddress || "";
     const status = (bill.status || "").toLowerCase();
 
-    const rows = [
-      amount ? this._renderRow("Amount Due", amount) : "",
-      due ? this._renderRow("Due Date", due) : "",
-      billing ? this._renderRow("Billing Period", billing) : "",
-      account ? this._renderRow("Account", account) : "",
-      received ? this._renderRow("Received", received) : "",
-      location ? this._renderRow("Service", location) : "",
-    ].filter(Boolean);
+    const fields =
+      Array.isArray(this._config.fields) && this._config.fields.length
+        ? this._config.fields
+        : UET_DEFAULT_FIELDS;
+
+    const fieldValues = {
+      amount_due: amount,
+      due_date: due,
+      account,
+      billing_period: billing,
+    };
+
+    const rows = fields
+      .map((field) => {
+        const value = fieldValues[field];
+        if (!value) {
+          return "";
+        }
+        const label = UET_FIELD_LABELS[field] || field;
+        return this._renderRow(label, value);
+      })
+      .filter(Boolean);
 
     const statusBadge = status
       ? `<div class="uet-status ${status === "overdue" ? "overdue" : ""}">${status}</div>`
@@ -231,9 +337,11 @@ class UtilitiesEmailTrackerCard extends HTMLElement {
           <div class="uet-bill-provider">${provider}</div>
           ${statusBadge}
         </div>
-        <div class="uet-data">
-          ${rows.join("")}
-        </div>
+        ${
+          rows.length
+            ? `<div class="uet-data">${rows.join("")}</div>`
+            : ""
+        }
       </div>
     `;
   }
@@ -370,66 +478,148 @@ class UtilitiesEmailTrackerCardEditor extends HTMLElement {
           color: var(--secondary-text-color);
           font-size: 0.8rem;
         }
+        .uet-section {
+          border: 1px solid var(--divider-color, rgba(0, 0, 0, 0.12));
+          border-radius: 8px;
+          padding: 12px;
+          background: var(--card-background-color, transparent);
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+        .uet-section-title {
+          font-weight: 600;
+          font-size: 1rem;
+          color: var(--primary-text-color);
+        }
+        .uet-no-entities {
+          padding: 8px 12px;
+          background: var(--warning-color, #ffa726);
+          color: var(--text-primary-color, #000);
+          border-radius: 4px;
+          font-size: 0.75rem;
+        }
+        .uet-checkbox-group {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+        .uet-checkbox {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 0.85rem;
+        }
+        ha-combo-box,
+        ha-textfield {
+          width: 100%;
+        }
       `;
       this.appendChild(this._style);
     }
 
     if (!this._rendered) {
+      const selectedFields =
+        Array.isArray(this._config?.fields) && this._config.fields.length
+          ? this._config.fields
+          : UET_DEFAULT_FIELDS;
+
+      const fieldOptions = UET_VALID_FIELDS.map((field) => {
+        const checked = selectedFields.includes(field) ? "checked" : "";
+        const label = UET_FIELD_LABELS[field] || field;
+        return `
+          <label class="uet-checkbox">
+            <input type="checkbox" class="uet-field-option" data-field="${field}" ${checked}>
+            <span>${label}</span>
+          </label>
+        `;
+      }).join("");
+
       this._root.innerHTML = `
-        <div class="uet-field">
-          <div class="uet-label">Entity</div>
-          <div class="uet-description">Select the Utilities Email Tracker sensor.</div>
-          <ha-entity-picker
-            class="entity"
-            .hass=${this._hass}
-            .includeDomains=${["sensor"]}
-            .value=${this._config?.entity || ""}
-          ></ha-entity-picker>
+        <div class="uet-section">
+          <div class="uet-section-title">Entity</div>
+          <div class="uet-field">
+            <div class="uet-label">Entity</div>
+            <div class="uet-description">Select the Utilities Email Tracker sensor.</div>
+            <ha-combo-box
+              class="entity"
+              label="Entity"
+              item-value-path="value"
+              item-label-path="label"
+              allow-custom-value
+            ></ha-combo-box>
+            <div class="uet-no-entities" hidden>
+              No matching utility bill sensors were found. Ensure the Utilities Email Tracker integration is configured.
+            </div>
+          </div>
+          <div class="uet-field">
+            <div class="uet-label">Title</div>
+            <ha-textfield
+              class="title"
+              label="Title (optional)"
+            ></ha-textfield>
+          </div>
+          <div class="uet-field">
+            <div class="uet-label">Provider Filter</div>
+            <div class="uet-description">Match by provider name (optional).</div>
+            <ha-textfield
+              class="provider"
+              label="Provider"
+            ></ha-textfield>
+          </div>
         </div>
-        <div class="uet-field">
-          <div class="uet-label">Title</div>
-          <ha-textfield
-            class="title"
-            .label=${"Title (optional)"}
-            .value=${this._config?.title || ""}
-          ></ha-textfield>
-        </div>
-        <div class="uet-field">
-          <div class="uet-label">Provider Filter</div>
-          <div class="uet-description">Match by provider name (optional).</div>
-          <ha-textfield
-            class="provider"
-            .label=${"Provider"}
-            .value=${this._config?.provider || ""}
-          ></ha-textfield>
-        </div>
-        <div class="uet-field">
-          <div class="uet-label">Bill Index</div>
-          <div class="uet-description">Select a specific bill (0 = newest). Leave blank to show all.</div>
-          <ha-textfield
-            class="bill-index"
-            type="number"
-            min="0"
-            .label=${"Bill index"}
-            .value=${this._config?.bill_index ?? ""}
-          ></ha-textfield>
+        <div class="uet-section">
+          <div class="uet-section-title">Display</div>
+          <div class="uet-field">
+            <div class="uet-label">Displayed Fields</div>
+            <div class="uet-description">Choose which bill details to show.</div>
+            <div class="uet-checkbox-group">
+              ${fieldOptions}
+            </div>
+          </div>
+          <div class="uet-field">
+            <div class="uet-label">Bill Index</div>
+            <div class="uet-description">Select a specific bill (0 = newest). Leave blank to show all.</div>
+            <ha-textfield
+              class="bill-index"
+              type="number"
+              min="0"
+              label="Bill index"
+            ></ha-textfield>
+          </div>
         </div>
       `;
 
-      this._entityPicker = this._root.querySelector(".entity");
+      this._entityCombo = this._root.querySelector(".entity");
       this._titleField = this._root.querySelector(".title");
       this._providerField = this._root.querySelector(".provider");
       this._billIndexField = this._root.querySelector(".bill-index");
-
-      this._entityPicker.addEventListener("value-changed", (ev) =>
-        this._updateConfig("entity", ev.detail.value)
+      this._noEntitiesNotice = this._root.querySelector(".uet-no-entities");
+      this._fieldCheckboxes = Array.from(
+        this._root.querySelectorAll(".uet-field-option")
       );
+
+      if (this._entityCombo) {
+        this._entityCombo.addEventListener("value-changed", (ev) => {
+          const value = ev.detail?.value ?? ev.target?.value ?? "";
+          this._updateConfig("entity", value || null);
+        });
+      }
       this._titleField.addEventListener("input", (ev) =>
         this._updateConfig("title", ev.target.value)
       );
       this._providerField.addEventListener("input", (ev) =>
         this._updateConfig("provider", ev.target.value)
       );
+      this._fieldCheckboxes.forEach((checkbox) => {
+        checkbox.addEventListener("change", () => {
+          const selected = this._fieldCheckboxes
+            .filter((box) => box.checked)
+            .map((box) => box.dataset.field)
+            .filter(Boolean);
+          this._updateConfig("fields", selected.length ? selected : null);
+        });
+      });
       this._billIndexField.addEventListener("input", (ev) => {
         const raw = ev.target.value;
         if (raw === "") {
@@ -444,15 +634,36 @@ class UtilitiesEmailTrackerCardEditor extends HTMLElement {
       this._rendered = true;
     }
 
-    if (this._entityPicker) {
-      this._entityPicker.hass = this._hass;
-      this._entityPicker.value = this._config?.entity || "";
+    if (this._entityCombo) {
+      const items = this._getUtilityEntities();
+      this._entityCombo.hass = this._hass;
+      this._entityCombo.items = items;
+      this._entityCombo.value = this._config?.entity || "";
+      if (this._noEntitiesNotice) {
+        this._noEntitiesNotice.hidden = items.length > 0;
+      }
     }
     if (this._titleField) {
       this._titleField.value = this._config?.title || "";
     }
     if (this._providerField) {
       this._providerField.value = this._config?.provider || "";
+    }
+    if (this._fieldCheckboxes) {
+      const selectedFields =
+        Array.isArray(this._config?.fields) && this._config.fields.length
+          ? this._config.fields
+          : [];
+      this._fieldCheckboxes.forEach((checkbox) => {
+        const field = checkbox.dataset.field;
+        if (!field) {
+          return;
+        }
+        const isChecked = selectedFields.length
+          ? selectedFields.includes(field)
+          : UET_DEFAULT_FIELDS.includes(field);
+        checkbox.checked = isChecked;
+      });
     }
     if (this._billIndexField) {
       const indexValue =
@@ -485,6 +696,30 @@ class UtilitiesEmailTrackerCardEditor extends HTMLElement {
       })
     );
   }
+
+  _getUtilityEntities() {
+    if (!this._hass || !this._hass.states) {
+      return [];
+    }
+
+    const entries = Object.values(this._hass.states)
+      .filter((state) =>
+        state &&
+        typeof state.entity_id === "string" &&
+        state.entity_id.startsWith("sensor.") &&
+        Array.isArray(state.attributes?.bills)
+      )
+      .map((state) => {
+        const friendly = state.attributes?.friendly_name || state.entity_id;
+        return {
+          value: state.entity_id,
+          label: `${friendly} (${state.entity_id})`,
+        };
+      })
+      .sort((a, b) => a.label.localeCompare(b.label));
+
+    return entries;
+  }
 }
 
 if (!customElements.get("utilities-email-tracker-card")) {
@@ -499,9 +734,10 @@ if (!customElements.get("utilities-email-tracker-card")) {
     description:
       "Display the most recent utility bill parsed by the Utilities Email Tracker integration.",
     preview: true,
+    version: CARD_VERSION,
   });
   console.info(
-    `%cUTILITIES-EMAIL-TRACKER-CARD ${CARD_VERSION}`,
+    `%cUTILITIES-EMAIL-TRACKER-CARD v${CARD_VERSION}`,
     "color: #4caf50; font-weight: 700;"
   );
 }
