@@ -6,13 +6,17 @@ class UtilitiesEmailTrackerCard extends HTMLElement {
       throw new Error("Entity is required");
     }
 
+    const parsedIndex = Number(config.bill_index);
+    const hasBillIndex =
+      config.bill_index !== undefined &&
+      config.bill_index !== null &&
+      Number.isInteger(parsedIndex);
+
     this._config = {
       title: config.title,
       provider: config.provider,
-      bill_index: Number.isInteger(config.bill_index)
-        ? Number(config.bill_index)
-        : 0,
       entity: config.entity,
+      ...(hasBillIndex ? { bill_index: parsedIndex } : {}),
     };
 
     if (!this._card) {
@@ -61,16 +65,6 @@ class UtilitiesEmailTrackerCard extends HTMLElement {
         gap: 12px;
         padding: 16px;
       }
-      .uet-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-      }
-      .uet-title {
-        font-size: 1.2rem;
-        font-weight: 600;
-      }
       .uet-status {
         font-size: 0.75rem;
         text-transform: uppercase;
@@ -83,6 +77,27 @@ class UtilitiesEmailTrackerCard extends HTMLElement {
       .uet-status.overdue {
         background-color: var(--error-color);
         color: var(--text-primary-color, #fff);
+      }
+      .uet-bill {
+        border: 1px solid var(--divider-color, rgba(0, 0, 0, 0.12));
+        border-radius: 10px;
+        padding: 12px 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .uet-bill + .uet-bill {
+        margin-top: 8px;
+      }
+      .uet-bill-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .uet-bill-provider {
+        font-size: 1.05rem;
+        font-weight: 600;
       }
       .uet-data {
         display: grid;
@@ -114,11 +129,12 @@ class UtilitiesEmailTrackerCard extends HTMLElement {
       return;
     }
 
+    const title = this._config.title || "Utilities";
     const stateObj = this._hass.states[this._config.entity];
 
     if (!stateObj) {
       this._card.innerHTML = `<div class="uet-empty">Entity ${this._config.entity} not found</div>`;
-      this._card.setAttribute("header", "Utility Bill");
+      this._card.setAttribute("header", title);
       return;
     }
 
@@ -126,44 +142,18 @@ class UtilitiesEmailTrackerCard extends HTMLElement {
       ? stateObj.attributes.bills
       : [];
 
-    const bill = this._selectBill(bills);
+    const list = this._collectBills(bills);
 
-    if (!bill) {
-      const title = this._config.title || stateObj.attributes?.friendly_name || "Utility Bill";
-      this._card.setAttribute("header", title);
+    this._card.setAttribute("header", title);
+
+    if (!list.length) {
       this._card.innerHTML = `<div class="uet-wrapper"><div class="uet-empty">No bills available</div></div>`;
       return;
     }
 
-    const title = this._config.title || bill.provider || stateObj.attributes?.friendly_name || "Utility Bill";
-    const account = bill.account_number || bill.account || bill.accountNumber || "";
-    const due = this._formatDate(bill.due_date_iso, bill.due_date);
-    const billing = this._resolveBillingPeriod(bill);
-    const amount = this._formatAmount(bill.amount_due, bill.amount_due_value);
-    const status = (bill.status || "").toLowerCase();
-
-    this._card.setAttribute("header", title);
-
-    const rows = [
-      account ? this._renderRow("Account", account) : "",
-      due ? this._renderRow("Due Date", due) : "",
-      billing ? this._renderRow("Billing Period", billing) : "",
-      amount ? this._renderRow("Amount Due", amount) : "",
-    ].filter(Boolean);
-
-    const statusBadge = status
-      ? `<div class="uet-status ${status === "overdue" ? "overdue" : ""}">${status}</div>`
-      : "";
-
     this._card.innerHTML = `
       <div class="uet-wrapper">
-        <div class="uet-header">
-          <div class="uet-title">${title}</div>
-          ${statusBadge}
-        </div>
-        <div class="uet-data">
-          ${rows.join("")}
-        </div>
+        ${list.map((item) => this._renderBill(item)).join("")}
       </div>
     `;
   }
@@ -177,9 +167,9 @@ class UtilitiesEmailTrackerCard extends HTMLElement {
     `;
   }
 
-  _selectBill(bills) {
+  _collectBills(bills) {
     if (!Array.isArray(bills) || bills.length === 0) {
-      return null;
+      return [];
     }
 
     let filtered = bills;
@@ -188,14 +178,64 @@ class UtilitiesEmailTrackerCard extends HTMLElement {
       filtered = bills.filter((item) =>
         this._matchesProvider(item, providerFilter)
       );
+      if (filtered.length === 0) {
+        filtered = bills;
+      }
     }
 
-    if (filtered.length === 0) {
-      filtered = bills;
+    if (Number.isInteger(this._config.bill_index)) {
+      const index = this._config.bill_index;
+      if (index >= 0 && index < filtered.length) {
+        return [filtered[index]];
+      }
+      return [];
     }
 
-    const index = this._config.bill_index ?? 0;
-    return filtered[index] || filtered[0];
+    return filtered;
+  }
+
+  _renderBill(bill) {
+    const provider =
+      bill.provider ||
+      bill.provider_name ||
+      bill.providerName ||
+      bill.from ||
+      bill.subject ||
+      "Utility";
+
+    const account =
+      bill.account_number || bill.account || bill.accountNumber || "";
+    const due = this._formatDate(bill.due_date_iso, bill.due_date);
+    const billing = this._resolveBillingPeriod(bill);
+    const amount = this._formatAmount(bill.amount_due, bill.amount_due_value);
+    const received = this._formatDate(bill.received, bill.received);
+    const location = bill.service_address || bill.serviceAddress || "";
+    const status = (bill.status || "").toLowerCase();
+
+    const rows = [
+      amount ? this._renderRow("Amount Due", amount) : "",
+      due ? this._renderRow("Due Date", due) : "",
+      billing ? this._renderRow("Billing Period", billing) : "",
+      account ? this._renderRow("Account", account) : "",
+      received ? this._renderRow("Received", received) : "",
+      location ? this._renderRow("Service", location) : "",
+    ].filter(Boolean);
+
+    const statusBadge = status
+      ? `<div class="uet-status ${status === "overdue" ? "overdue" : ""}">${status}</div>`
+      : "";
+
+    return `
+      <div class="uet-bill">
+        <div class="uet-bill-header">
+          <div class="uet-bill-provider">${provider}</div>
+          ${statusBadge}
+        </div>
+        <div class="uet-data">
+          ${rows.join("")}
+        </div>
+      </div>
+    `;
   }
 
   _matchesProvider(bill, filter) {
@@ -365,13 +405,13 @@ class UtilitiesEmailTrackerCardEditor extends HTMLElement {
         </div>
         <div class="uet-field">
           <div class="uet-label">Bill Index</div>
-          <div class="uet-description">Select another bill in the list (0 = newest).</div>
+          <div class="uet-description">Select a specific bill (0 = newest). Leave blank to show all.</div>
           <ha-textfield
             class="bill-index"
             type="number"
             min="0"
             .label=${"Bill index"}
-            .value=${this._config?.bill_index ?? 0}
+            .value=${this._config?.bill_index ?? ""}
           ></ha-textfield>
         </div>
       `;
@@ -391,8 +431,14 @@ class UtilitiesEmailTrackerCardEditor extends HTMLElement {
         this._updateConfig("provider", ev.target.value)
       );
       this._billIndexField.addEventListener("input", (ev) => {
-        const value = Number(ev.target.value || 0);
-        this._updateConfig("bill_index", Number.isNaN(value) ? 0 : value);
+        const raw = ev.target.value;
+        if (raw === "") {
+          this._updateConfig("bill_index", null);
+          return;
+        }
+
+        const value = Number(raw);
+        this._updateConfig("bill_index", Number.isNaN(value) ? null : value);
       });
 
       this._rendered = true;
@@ -409,7 +455,11 @@ class UtilitiesEmailTrackerCardEditor extends HTMLElement {
       this._providerField.value = this._config?.provider || "";
     }
     if (this._billIndexField) {
-      this._billIndexField.value = `${this._config?.bill_index ?? 0}`;
+      const indexValue =
+        this._config?.bill_index === undefined || this._config?.bill_index === null
+          ? ""
+          : `${this._config.bill_index}`;
+      this._billIndexField.value = indexValue;
     }
   }
 

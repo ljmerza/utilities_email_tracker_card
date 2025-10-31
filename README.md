@@ -22,7 +22,14 @@ Add the card from the Lovelace dashboard editor and configure:
 - **Entity** – the Utilities Email Tracker sensor (e.g.
   `sensor.my_account_utility_bills`)
 - Optional **Title**, **Provider filter**, and **Bill index** can be adjusted
-  in the card editor.
+  in the card editor. Leave the bill index blank to list every available bill.
+
+The card defaults to the title **Utilities** when a custom title isn't
+provided. All matching bills are rendered with their provider, status, and key
+details so you can scan every utility in one place. The provider filter
+performs a flexible match against the bill attributes, so you can enter a
+partial provider name (for example just `PSNC`) or sender address to target the
+correct bill.
 
 The card automatically formats dates using your Home Assistant locale and
 displays the first matching bill based on your filter or index.
